@@ -1,5 +1,6 @@
 var request = require('request');
-
+var RateLimiter = require('limiter').RateLimiter;
+var limiter = new RateLimiter(1200, 'minute');
 exports.Api = OsuApi;
 
 var Modes = {
@@ -13,9 +14,9 @@ exports.Modes = Modes;
 
 function buildOnlyFirstCallback(originalCallback) {
     return (function (err, obj){
-        if(err) {
+        if(err && typeof(originalCallback) === 'function') {
             originalCallback(err, null);
-        } else {
+        } else if (typeof(originalCallback) === 'function') {
             originalCallback(null, obj[0]);
         }
     });
@@ -31,32 +32,37 @@ OsuApi.prototype.setMode = (function(mode) {
 });
 
 OsuApi.prototype.callApi = (function(endpoint, params, callback) {
-    params.k = this.apiKey;
-    request.get({
-        url: 'https://osu.ppy.sh/api/'+endpoint,
-        qs: params,
-        followRedirect: false
-    }, function(error, response, body) {
-        if(error) {
-            callback(error, null);
-        } else {
-            var err = null;
-            var obj = null;
-            if(response.statusCode == 200) {
-                try {
-                    obj = JSON.parse(body);
-                } catch(e) {
-                    if(body == 'Please provide a valid API key.') {
-                        err = new Error("Invalid API key");
-                    } else {
-                        err = new Error("Could not parse json");
-                    }
-                }
+    var self = this;
+    limiter.removeTokens(1, function(errors, remainingRequests) {
+        if (errors) console.error(errors);
+        params.k = self.apiKey;
+        request.get({
+            url: 'https://osu.ppy.sh/api/'+endpoint,
+            qs: params,
+            followRedirect: false
+        }, function(error, response, body) {
+            if(error) {
+                callback(error, null);
             } else {
-                err = new Error("Bad http-response");
+                var err = null;
+                var obj = null;
+                if(response.statusCode == 200) {
+                    try {
+                        //obj = obj.replace(/["'](\d+|\d+\.\d+)["']/gm, '$1');
+                        obj = JSON.parse(body.replace(/["'](\d+|\d+\.\d+)["']/gm, '$1'));
+                    } catch(e) {
+                        if(body == 'Please provide a valid API key.') {
+                            err = new Error("Invalid API key");
+                        } else {
+                            err = new Error("Could not parse json");
+                        }
+                    }
+                } else {
+                    err = new Error("Bad http-response");
+                }
+                callback(err, obj);
             }
-            callback(err, obj);
-        }
+        });
     });
 });
 
